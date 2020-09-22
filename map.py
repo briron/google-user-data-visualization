@@ -4,7 +4,7 @@ import folium
 
 class GeoDataHandler:
     def __init__(self):
-        with open("./tmap_key.txt") as lf:
+        with open("./etc/tmap_key.txt") as lf:
             self.__TMAP_KEY = lf.read()
 
         self.__GEOCODING_URL = "https://apis.openapi.sk.com/tmap/pois?version=1&appKey=" + self.__TMAP_KEY + "&"
@@ -51,7 +51,6 @@ class GeoDataHandler:
         headers = {'appKey' : self.__TMAP_KEY}
         resp = requests.post(url, headers=headers, data=data)
         dic = json.loads(resp.text)
-        print(resp.text)
         return self.__getCoordinateFromFeature(dic['features'])
     
     def __passToString(self, pass_lat_lng):
@@ -96,9 +95,7 @@ class GeoDataHandler:
         data = {}
         [data['startY'], data['startX']] = start_lat_lng
         [data['endY'], data['endX']] = end_lat_lng
-        print(pass_lat_lng)
         data['passList'] = self.__passToString(pass_lat_lng)
-        print(data['passList'])
         steps = self.__requestDirections(self.__DRIVING_URL, data)
         return steps
 
