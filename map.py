@@ -1,15 +1,15 @@
 import requests
 import json
 import folium
+from folium.plugins import HeatMap
 import pandas as pd
 import datetime
-# from util import calcDistance
-from typing import Tuple
+from typing import Tuple, List
 import numpy as np
 
 class GeoDataHandler:
     def __init__(self):
-        with open("./tmap_key.txt") as lf:
+        with open("./etc/tmap_key.txt") as lf:
             self.__TMAP_KEY = lf.read()
 
         self.__GEOCODING_URL = "https://apis.openapi.sk.com/tmap/pois?version=1&appKey=" + self.__TMAP_KEY + "&"
@@ -76,7 +76,7 @@ class GeoDataHandler:
         return steps
 
     # 시작점과 도착점의 위경도를 list로 입력하면, 도보로 이동하는 위치들을 list로 반환한다.
-    def getWalkingDirectionByLatLng(self, start_lat_lng, end_lat_lng, pass_lat_lng=[]):
+    def getWalkingDirectionByLatLng(self, start_lat_lng : List[float], end_lat_lng: List[float], pass_lat_lng=[]):
         data = {}
         [data['startY'], data['startX']] = start_lat_lng
         [data['endY'], data['endX']] = end_lat_lng
@@ -96,7 +96,7 @@ class GeoDataHandler:
         return steps
     
     # 시작점과 도착점의 위경도를 list로 입력하면, 차로 이동하는 위치들을 list로 반환한다.
-    def getDrivingDirectionByLatLng(self, start_lat_lng, end_lat_lng, pass_lat_lng=[]):
+    def getDrivingDirectionByLatLng(self, start_lat_lng : List[float], end_lat_lng: List[float], pass_lat_lng=[]):
         data = {}
         [data['startY'], data['startX']] = start_lat_lng
         [data['endY'], data['endX']] = end_lat_lng
@@ -108,7 +108,6 @@ class GeoDataHandler:
 class MapHandler:
     def __init__(self):
         self.m = folium.Map(location=[36, 128], zoom_start = 7)
-        self.gh = GeoDataHandler()
 
     # Singleton 패턴
     def __new__(cls):
@@ -118,27 +117,23 @@ class MapHandler:
         
     def initMap(self):
         self.m = folium.Map(location=[36, 128], zoom_start = 7)
-
-    # 시작점과 도착점의 위경도를 list로 입력하여, 도보로 이동하는 것을 지도로 보여준다.
-    def visualizeWalkingDirection(self, start_lat_lng, dest_lat_lng, pass_lat_lng=[]):
-        steps = self.gh.getWalkingDirectionByLatLng(start_lat_lng, dest_lat_lng, pass_lat_lng)
+        return self.m
+        
+    def visualizePolyLine(self, steps):
         for i in range(len(steps) - 1):
             folium.PolyLine([steps[i], steps[i+1]], color="#00498c",weight=4,opacity=0.7).add_to(self.m)
         return self.m
-    
-    # 시작점과 도착점의 위경도를 list로 입력하여, 도보로 이동하는 것을 지도로 보여준다.
-    def visualizeDrivingDirection(self, start_lat_lng, dest_lat_lng, pass_lat_lng=[]):
-        steps = self.gh.getDrivingDirectionByLatLng(start_lat_lng, dest_lat_lng, pass_lat_lng)
-        for i in range(len(steps) - 1):
-            folium.PolyLine([steps[i], steps[i+1]], color="#00498c",weight=4,opacity=0.7).add_to(self.m)
-        return self.m
-    
-    def visualizeMarker(self, markers, center=pd.DataFrame(), count=10):
-        self.initMap()
-        if not center.empty:
-            folium.Marker(center[['latitude', 'longitude']], popup=center["address"]).add_to(self.m)
+  
+    def visualizeMarker(self, markers, center={}, count=10):
+        if center:
+            folium.Marker([center['latitude'], center['longitude']], popup=center['address']).add_to(self.m)
         for index, row in markers.iterrows():
             folium.CircleMarker(row[['latitude', 'longitude']], radius = 8, color='#B70205', fill_color='#B70205', popup=str(row['datetime'])).add_to(self.m)
+        return self.m
+    
+    def visualizeHeatmap(self, location):
+        heatmap_data = np.concatenate((location.values, np.ones((len(location.values), 1)) * 0.2), axis=1)
+        HeatMap(heatmap_data).add_to(self.m)
         return self.m
 
 
@@ -150,21 +145,22 @@ class LocationDataHandler:
         with open(filepath, 'r') as lf:
             raw = json.loads(lf.read())
             self.location_data = self.preprocess(raw)
-            self.calcDistance = np.vectorize(self.calcDistance)
-                        
+            self.__calcDistance = np.vectorize(self.__calcDistance)
+            
     def preprocess(self, raw):
         location_data = pd.DataFrame(raw['locations'])
         location_data = location_data[location_data.accuracy < 1000]
         location_data['latitudeE7'] = location_data['latitudeE7']/float(1e7)
         location_data['longitudeE7'] = location_data['longitudeE7']/float(1e7)
-        location_data['datetime'] = location_data.timestampMs.map(lambda x: datetime.datetime.fromtimestamp((float(x)/1000), datetime.timezone(datetime.timedelta(hours=9))))
-        location_data.rename(columns={'latitudeE7':'latitude', 'longitudeE7':'longitude', 'timestampMs':'timestamp'}, inplace=True)
-        location_data = location_data.drop(['accuracy', 'activity', 'altitude', 'heading', 'timestamp', 'velocity', 'verticalAccuracy'], axis=1)
+        location_data['timestampMs'] = location_data['timestampMs'].map(lambda x: ((float(x)/1000)))
+        location_data['datetime'] = location_data.timestampMs.map(lambda x: datetime.datetime.fromtimestamp(x, datetime.timezone(datetime.timedelta(hours=9))))
+        location_data.rename(columns={'latitudeE7':'latitude', 'longitudeE7':'longitude'}, inplace=True)
+        location_data = location_data.drop(['accuracy', 'activity', 'altitude', 'heading', 'timestampMs', 'velocity', 'verticalAccuracy'], axis=1)
         location_data = location_data.sort_values(by=['datetime'])
         location_data.reset_index(drop=True, inplace=True)
         return location_data
 
-    def calcDistance(self, lat1, lon1, lat2, lon2):
+    def __calcDistance(self, lat1, lon1, lat2, lon2):
         R = 6373.0
         lat1, lon1, lat2, lon2 = map(np.deg2rad, [lat1, lon1, lat2, lon2])
         dlon = lon2 - lon1
@@ -174,30 +170,77 @@ class LocationDataHandler:
         distance = R * c
         return distance
     
-    def getNearestPlace(self, address, count=10):
+    def getNearestLocation(self, address, count=10) -> Tuple[dict, pd.DataFrame]:
         gh = GeoDataHandler()
         place_lat_lng = list(map(float,gh.getLatLngByAddress(address)))
         address = gh.getAddressByLatLng(place_lat_lng)
-        # 이 부분을 수정해야 함
-        center = pd.DataFrame({'latitude':place_lat_lng[0], 'longitude':place_lat_lng[1], 'address':address})
-        self.location_data['distance'] = self.calcDistance(lh.location_data['latitude'], lh.location_data['longitude'], place_lat_lng[0], place_lat_lng[1])
-        return center, self.location_data.iloc[self.location_data['distance'].nsmallest(10).index]
+        center = {'latitude':float(place_lat_lng[0]), 'longitude':float(place_lat_lng[1]), 'address':address}
+        self.location_data['distance'] = self.__calcDistance(self.location_data['latitude'], self.location_data['longitude'], place_lat_lng[0], place_lat_lng[1])
+        nearest_location = self.location_data.iloc[self.location_data['distance'].nsmallest(count).index]
+        self.location_data = self.location_data.drop('distance', axis=1)
+        return center, nearest_location
+    
+    def getTimeLocation(self, from_time, to_time):
+        return self.location_data[(self.location_data.datetime >= from_time) & (self.location_data.datetime <= to_time)]
+    
+    def getPassLatLng(self, time_location, passCount):
+        pass_lat_lng = []
+        passCount = min(5, max(0, passCount))
+        for i in range(passCount):
+            idx = int(time_location.count() * i / passCount)
+            pass_lat_lng.append(time_location.iloc[idx][['latitude', 'longitude']].tolist())
+        return pass_lat_lng
         
 
-# 이 클래스를 완성시켜야 함
 class MapService:
-    def __init__(self):
+    def __init__(self, lh):
+        self.lh = lh
         self.mh = MapHandler()
+        self.gh = GeoDataHandler()
         
-    def visualizeNearestPlace(self, address):
-        center, markers = lh.getNearestPlace(address)
-        return mh.visualizeMarker(markers, center)
+    def visualizeNearestLocation(self, address):
+        self.mh.initMap()
+        center, markers = self.lh.getNearestLocation(address)
+        return self.mh.visualizeMarker(markers, center=center)
+    
+    def visualizeTimeLocation(self, from_time, to_time):
+        self.mh.initMap()
+        time_location = self.lh.getTimeLocation(from_time, to_time)
+        return self.mh.visualizeMarker(time_location)
+    
+    def visualizeWalkingDirection(self, from_time, to_time, passCount=0):
+        self.mh.initMap()
+        time_location = self.lh.getTimeLocation(from_time, to_time)
+        if len(time_location) <= 1:
+            return self.mh.initMap()
+        start_lat_lng = time_location.iloc[0][['latitude', 'longitude']].tolist()
+        dest_lat_lng = time_location.iloc[-1][['latitude', 'longitude']].tolist()
+        pass_lat_lng = lh.getPassLatLng(time_location, passCount)
+        steps = self.gh.getWalkingDirectionByLatLng(start_lat_lng, dest_lat_lng, pass_lat_lng)
+        self.mh.visualizeMarker(time_location)
+        return self.mh.visualizePolyLine(steps)
+    
+    def visualizeDrivingDirection(self, from_time, to_time, passCount=0):
+        self.mh.initMap()
+        time_location = self.lh.getTimeLocation(from_time, to_time)
+        if len(time_location) <= 1:
+            return self.mh.initMap()
+        start_lat_lng = time_location.iloc[0][['latitude', 'longitude']].tolist()
+        dest_lat_lng = time_location.iloc[-1][['latitude', 'longitude']].tolist()
+        pass_lat_lng = lh.getPassLatLng(time_location, passCount)
+        steps = self.gh.getDrivingDirectionByLatLng(start_lat_lng, dest_lat_lng, pass_lat_lng)
+        self.mh.visualizeMarker(time_location)
+        return self.mh.visualizePolyLine(steps)
+    
+    def visualizeTimeHeatmap(self, from_time, to_time):
+        self.mh.initMap()
+        time_location = self.lh.getTimeLocation(from_time, to_time)
+        time_location = time_location.drop('datetime', axis=1)
+        return self.mh.visualizeHeatmap(time_location)
 
 
-gh = GeoDataHandler()
-mh = MapHandler()
-lh = LocationDataHandler()
-
-#mh.visualizeMarker(lh.getNearestPlace("강남역"))
-service = MapService()
-service.visualizeNearestPlace("강남역")
+if __name__ == "__main__":
+    gh = GeoDataHandler()
+    mh = MapHandler()
+    lh = LocationDataHandler()
+    service = MapService(lh)
