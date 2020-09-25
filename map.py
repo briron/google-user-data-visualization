@@ -138,14 +138,15 @@ class MapHandler:
 
 
 class LocationDataHandler:
-    def __init__(self, filepath=''):
-        LOCATION_FILEPATH = '../data/LocationHistory.json'
-        if not filepath:
-            filepath = LOCATION_FILEPATH
-        with open(filepath, 'r') as lf:
-            raw = json.loads(lf.read())
-            self.location_data = self.preprocess(raw)
-            self.__calcDistance = np.vectorize(self.__calcDistance)
+    def __init__(self, filepath='', fp=None):
+        self.__calcDistance = np.vectorize(self.__calcDistance)
+        if not fp:
+            if not filepath:
+                LOCATION_FILEPATH = '../data/LocationHistory.json'
+                filepath = LOCATION_FILEPATH
+            fp = open(filepath, 'r')
+        raw = json.loads(fp.read())
+        self.location_data = self.preprocess(raw)
             
     def preprocess(self, raw):
         location_data = pd.DataFrame(raw['locations'])
